@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
 
 void main() => runApp(const MyApp());
 
@@ -18,20 +19,19 @@ class _MyAppState extends State<MyApp> {
   String lightMapURL =
       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
   List<LatLng> points = [
-    LatLng(31.2990, 48.6613),
+    LatLng(31.309346, 48.675024),
   ];
-  SharedPreferences? _prefs;
+  LocationDatabaseHelper _databaseHelper = LocationDatabaseHelper();
   late Timer _timer;
   Location location = Location();
   LatLng initialCenter =
-      LatLng(31.2990, 48.6613); // Initial center set to Ahvaz city
+      const LatLng(31.309346, 48.675024); // Initial center set to Ahvaz city
 
   @override
   void initState() {
     super.initState();
-    initializeSharedPreferences();
     // Load stored location data when the app starts
-    getStoredLocationData();
+    getStoredLocationDataFromDatabase();
     startTimer();
     // Get current location and set it as the initial center
     getCurrentLocation();
@@ -51,8 +51,8 @@ class _MyAppState extends State<MyApp> {
                 flex: 3,
                 child: FlutterMap(
                   options: MapOptions(
-                    center: initialCenter,
-                    zoom: 15.0,
+                    initialCenter: initialCenter,
+                    initialZoom: 15.0,
                   ),
                   children: [
                     TileLayer(
@@ -90,10 +90,6 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  void initializeSharedPreferences() async {
-    _prefs = await SharedPreferences.getInstance();
-  }
-
   void startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
       getLocationData();
@@ -109,27 +105,24 @@ class _MyAppState extends State<MyApp> {
       points.add(LatLng(latitude, longitude));
     });
 
-    storeLocationData(latitude, longitude);
+    await storeLocationDataInDatabase(latitude, longitude);
   }
 
-  void storeLocationData(double latitude, double longitude) {
-    List<String> locationStrings = _prefs?.getStringList('locations') ?? [];
-    locationStrings.add('$latitude,$longitude');
-    _prefs?.setStringList('locations', locationStrings);
+  Future<void> storeLocationDataInDatabase(
+      double latitude, double longitude) async {
+    await _databaseHelper.insertLocation(latitude, longitude);
   }
 
-  void getStoredLocationData() {
-    List<String>? storedLocationStrings = _prefs?.getStringList('locations');
-    if (storedLocationStrings != null) {
-      setState(() {
-        points = storedLocationStrings.map((location) {
-          List<String> coordinates = location.split(',');
-          double latitude = double.parse(coordinates[0]);
-          double longitude = double.parse(coordinates[1]);
-          return LatLng(latitude, longitude);
-        }).toList();
-      });
-    }
+  Future<void> getStoredLocationDataFromDatabase() async {
+    List<Map<String, dynamic>> locationMaps =
+        await _databaseHelper.getAllLocations();
+    setState(() {
+      points = locationMaps.map((location) {
+        double latitude = location['latitude'] as double;
+        double longitude = location['longitude'] as double;
+        return LatLng(latitude, longitude);
+      }).toList();
+    });
   }
 
   void getCurrentLocation() async {
@@ -138,6 +131,8 @@ class _MyAppState extends State<MyApp> {
       setState(() {
         initialCenter =
             LatLng(currentLocation.latitude!, currentLocation.longitude!);
+        points.insert(
+            0, initialCenter); // Add current location to the beginning
       });
     } catch (e) {
       print('Failed to get current location: $e');
@@ -148,5 +143,53 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _timer.cancel();
     super.dispose();
+  }
+}
+
+class LocationDatabaseHelper {
+  static final LocationDatabaseHelper _instance =
+      LocationDatabaseHelper._internal();
+
+  factory LocationDatabaseHelper() => _instance;
+
+  LocationDatabaseHelper._internal();
+
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await initDatabase();
+    return _database!;
+  }
+
+  Future<Database> initDatabase() async {
+    String path = join(await getDatabasesPath(), 'locations.db');
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE locations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            latitude REAL,
+            longitude REAL
+          )
+        ''');
+      },
+    );
+  }
+
+  Future<void> insertLocation(double latitude, double longitude) async {
+    final Database db = await database;
+    await db.insert(
+      'locations',
+      {'latitude': latitude, 'longitude': longitude},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getAllLocations() async {
+    final Database db = await database;
+    return await db.query('locations');
   }
 }
