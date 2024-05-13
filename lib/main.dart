@@ -18,10 +18,8 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   String lightMapURL =
       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-  List<LatLng> points = [
-    LatLng(31.309346, 48.675024),
-  ];
-  LocationDatabaseHelper _databaseHelper = LocationDatabaseHelper();
+  List<LatLng> points = [];
+  final LocationDatabaseHelper _databaseHelper = LocationDatabaseHelper();
   late Timer _timer;
   Location location = Location();
   LatLng initialCenter =
@@ -30,7 +28,6 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    // Load stored location data when the app starts
     getStoredLocationDataFromDatabase();
     startTimer();
     // Get current location and set it as the initial center
@@ -51,7 +48,9 @@ class _MyAppState extends State<MyApp> {
                 flex: 3,
                 child: FlutterMap(
                   options: MapOptions(
-                    initialCenter: initialCenter,
+                    initialCenter: points.isNotEmpty
+                        ? points.last
+                        : const LatLng(31.304292, 48.671116),
                     initialZoom: 15.0,
                   ),
                   children: [
@@ -97,15 +96,17 @@ class _MyAppState extends State<MyApp> {
   }
 
   void getLocationData() async {
-    // Simulating location data, replace with actual location retrieval logic
-    double latitude = 40.7128; // New York City latitude
-    double longitude = -74.0060; // New York City longitude
-
-    setState(() {
-      points.add(LatLng(latitude, longitude));
-    });
-
-    await storeLocationDataInDatabase(latitude, longitude);
+    try {
+      LocationData currentLocation = await location.getLocation();
+      setState(() {
+        points
+            .add(LatLng(currentLocation.latitude!, currentLocation.longitude!));
+      });
+      await storeLocationDataInDatabase(
+          currentLocation.latitude!, currentLocation.longitude!);
+    } catch (e) {
+      print('Failed to get current location: $e');
+    }
   }
 
   Future<void> storeLocationDataInDatabase(
@@ -131,8 +132,7 @@ class _MyAppState extends State<MyApp> {
       setState(() {
         initialCenter =
             LatLng(currentLocation.latitude!, currentLocation.longitude!);
-        points.insert(
-            0, initialCenter); // Add current location to the beginning
+        points.add(initialCenter); // Add current location to the beginning
       });
     } catch (e) {
       print('Failed to get current location: $e');
